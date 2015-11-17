@@ -162,7 +162,7 @@ class HighFiveArm(object):
         	# Torque to apply calculated with PD coltrol + feeforward term
             cmd[joint] = self._Kp[joint] * (desired_pose[joint] -
                                                    cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] -
-                                                   cur_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
+                                                   smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
         # command new joint torques
         self._limb.set_joint_torques(cmd)
 
