@@ -24,7 +24,7 @@ from scipy.signal import butter, lfilter
 global start_time
 flag = False
 accel = []
-vel_0 = 0
+vel_0 = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
 
 def callback (msg):
   global flag
@@ -132,8 +132,6 @@ class HighFiveArm(object):
         # record current angles/velocities
         cur_pos = self._limb.joint_angles()
         cur_vel = self._limb.joint_velocities()
-        smooth_vel = w
-        vel_0 = smooth_vel
 
         # identify amplitude and fequency of desired robot gripper movement
         amp = 3*0.175/2 #m
@@ -156,9 +154,12 @@ class HighFiveArm(object):
         desired_feedforward = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
         desired_feedforward['right_w1'] = -des_angular_displacement
 
-
         # calculate current forces
         for joint in self._limb.joint_names():
+        	# Compute smoothed version of current velocity
+        	smooth_vel[joint] = self._w[joint] * cur_vel[joint] + (1 - self._w[joint]) * vel_0[joint]
+        	vel_0[joint] = smooth_vel[joint]
+        	# Torque to apply calculated with PD coltrol + feeforward term
             cmd[joint] = self._Kp[joint] * (desired_pose[joint] -
                                                    cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] -
                                                    cur_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
