@@ -25,6 +25,7 @@ global start_time
 flag = False
 accel = []
 vel_0 = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
+count = 1
 
 def callback (msg):
   global flag
@@ -114,6 +115,7 @@ class HighFiveArm(object):
     def _update_forces(self):
         global start_time
         global flag
+        global count
 
         """
         Calculates the current angular difference between the desired
@@ -131,19 +133,34 @@ class HighFiveArm(object):
 
         # record current angles/velocities
         cur_pos = self._limb.joint_angles()
+        self._pos1 = cur_pos
         cur_vel = self._limb.joint_velocities()
+        self._time1 = time.time()
+        # angular velocity computed by change in angle over change in time
+        comp_vel = dict()
+        time_dict0 = dict()
+        time_dict1 = dict()
+        # make time into appropriate dictionary
+        if count > 1:
+        	for joint in self._limb.joint_names():
+        		time_dict0[joint] = self._time0
+        		time_dict1[joint] = self._time1
+        	for joint in self._limb.joint_names():
+        		comp_vel[joint] = (self._pos1[joint] - self._pos0[joint]) / (time_dict1[joint] - time_dict0[joint])
 
         # identify amplitude and fequency of desired robot gripper movement
         amp = 3*0.175/2 #m
         freq = 1.00 #Hz
 
         # jump ahead in time if hand impact is felt
-        if flag:
+        '''if flag:
             time_jump = (freq/2) - 2*(time.time() % freq)
             start_time = start_time + time_jump
-            flag = False
+            flag = False'''
 
         # find current time and use to calculate desired position, velocity
+        self._time0 = time.time()
+        self._pos0 = cur_pos
         elapsed_time = time.time() - start_time
         des_angular_displacement = -amp*np.sin(2*np.pi*freq*elapsed_time)
         des_angular_velocity = -amp*2*np.pi*freq*np.cos(2*np.pi*freq*elapsed_time)
@@ -156,9 +173,15 @@ class HighFiveArm(object):
 
         # calculate current forces
         for joint in self._limb.joint_names():
-        	# Compute smoothed version of current velocity
-        	smooth_vel[joint] = self._w[joint] * cur_vel[joint] + (1 - self._w[joint]) * vel_0[joint]
-        	vel_0[joint] = smooth_vel[joint]
+        	if count == 1:
+        		# For very start of robot motion, assume velocity 0, set smooth_vel to 0
+        		smooth_vel = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
+        		vel_0[joint] = smooth_vel[joint]
+        		count = count + 1
+        	else:
+        		# Compute smoothed version of current velocity
+        		smooth_vel[joint] = self._w[joint] * comp_vel[joint] + (1 - self._w[joint]) * vel_0[joint]
+        		vel_0[joint] = smooth_vel[joint]
         	# Torque to apply calculated with PD coltrol + feeforward term
             cmd[joint] = self._Kp[joint] * (desired_pose[joint] -
                                                    cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] -
