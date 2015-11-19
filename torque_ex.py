@@ -47,10 +47,8 @@ def callback (msg):
 class HighFiveArm(object):
     """
     Virtual Joint Springs class for torque example.
-
     @param limb: limb on which to run joint springs example
     @param reconfig_server: dynamic reconfigure server
-
     JointSprings class contains methods for the joint torque example allowing
     moving the limb to a neutral location, entering torque mode, and attaching
     virtual springs.
@@ -94,7 +92,7 @@ class HighFiveArm(object):
         self._Kd['right_s0'] = 2
         self._Kd['right_s1'] = 2
         self._Kd['right_w0'] = 2
-        self._Kd['right_w1'] = 1
+        self._Kd['right_w1'] = 2
         self._Kd['right_w2'] = 2
         self._Kd['right_e0'] = 2
         self._Kd['right_e1'] = 2
@@ -107,18 +105,20 @@ class HighFiveArm(object):
         self._Kf['right_e0'] = 0
         self._Kf['right_e1'] = 0
         # Velocity filter weight
-        self._w['right_s0'] = 0.01
-        self._w['right_s1'] = 0.01
-        self._w['right_w0'] = 0.01
-        self._w['right_w1'] = 0.01
-        self._w['right_w2'] = 0.01
-        self._w['right_e0'] = 0.01
-        self._w['right_e1'] = 0.01
+        self._w['right_s0'] = 0.1
+        self._w['right_s1'] = 0.1
+        self._w['right_w0'] = 0.1
+        self._w['right_w1'] = 0.1
+        self._w['right_w2'] = 0.1
+        self._w['right_e0'] = 0.1
+        self._w['right_e1'] = 0.1
 
     def _update_forces(self):
         global start_time
         global flag
         global count
+        global pos0
+        global time0
 
         """
         Calculates the current angular difference between the desired
@@ -137,7 +137,7 @@ class HighFiveArm(object):
         # record current angles/velocities
         cur_pos = self._limb.joint_angles()
         pos1 = cur_pos
-        cur_vel = self._limb.joint_velocities()
+        #cur_vel = self._limb.joint_velocities()
         time1 = time.time()
         # angular velocity computed by change in angle over change in time
         comp_vel = dict()
@@ -145,15 +145,14 @@ class HighFiveArm(object):
         time_dict1 = dict()
         # make time into appropriate dictionary
         if count > 1:
-        	for joint in self._limb.joint_names():
-        		time_dict0[joint] = time0
-        		time_dict1[joint] = time1
-        	for joint in self._limb.joint_names():
-        		comp_vel[joint] = (pos1[joint] - pos0[joint]) / (time_dict1[joint] - time_dict0[joint])
-        print(comp_vel)
+            for joint in self._limb.joint_names():
+                time_dict0[joint] = time0
+                time_dict1[joint] = time1
+            for joint in self._limb.joint_names():
+                comp_vel[joint] = (pos1[joint] - pos0[joint]) / (time_dict1[joint] - time_dict0[joint])
 
         # identify amplitude and fequency of desired robot gripper movement
-        amp = 3*0.175/2 #m
+        amp = 0.175/2 #m
         freq = 1.00 #Hz
 
         # jump ahead in time if hand impact is felt
@@ -177,21 +176,22 @@ class HighFiveArm(object):
 
         # calculate current forces
         for joint in self._limb.joint_names():
-        	if count == 1:
-        		# For very start of robot motion, assume velocity 0, set smooth_vel to 0
-        		smooth_vel = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
-        		vel_0[joint] = smooth_vel[joint]
-        		count = count + 1
-        		# Torque to apply calculated with PD coltrol + feeforward term
-            	cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
-        	if count > 1:
-        		print(joint)
-        		# Compute smoothed version of current velocity
-        		smooth_vel[joint] = self._w[joint] * comp_vel[joint] + (1 - self._w[joint]) * vel_0[joint]
-        		vel_0[joint] = smooth_vel[joint]
-        		# Torque to apply calculated with PD coltrol + feeforward term
-            	cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
+            if count == 1:
+                # For very start of robot motion, assume velocity 0, set smooth_vel to 0
+                smooth_vel = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
+                vel_0[joint] = smooth_vel[joint]
+                # Torque to apply calculated with PD coltrol + feeforward term
+                cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
+        smooth_vel = dict()
+        for joint in self._limb.joint_names():
+            if count > 1:
+                # Compute smoothed version of current velocity
+                smooth_vel[joint] = self._w[joint] * comp_vel[joint] + (1 - self._w[joint]) * vel_0[joint]
+                vel_0[joint] = smooth_vel[joint]
+                # Torque to apply calculated with PD coltrol + feeforward term
+                cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
         # command new joint torques
+        count = count + 1
         self._limb.set_joint_torques(cmd)
 
     def move_to_start_position(self):
@@ -210,11 +210,9 @@ class HighFiveArm(object):
 
 def main():
     """RSDK Joint Torque Example: Joint Springs
-
     Moves the specified limb to a neutral location and enters
     torque control mode, attaching virtual springs (Hooke's Law)
     to each joint maintaining the start position.
-
     Run this example on the specified limb and interact by
     grabbing, pushing, and rotating each joint to feel the torques
     applied that represent the virtual springs attached.
