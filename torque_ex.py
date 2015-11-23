@@ -152,7 +152,7 @@ class HighFiveArm(object):
                 comp_vel[joint] = (pos1[joint] - pos0[joint]) / (time_dict1[joint] - time_dict0[joint])
 
         # identify amplitude and fequency of desired robot gripper movement
-        amp = 0.175/2 #m
+        amp = 3*0.175/2 #m
         freq = 1.00 #Hz
 
         # jump ahead in time if hand impact is felt
