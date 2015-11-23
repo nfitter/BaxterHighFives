@@ -6,6 +6,8 @@
 Baxter RSDK Joint Torque Example: joint springs
 """
 
+import os
+import sys
 import argparse
 import rospy
 from dynamic_reconfigure.server import (
@@ -16,10 +18,14 @@ from std_msgs.msg import (
 )
 import baxter_interface
 from baxter_interface import CHECK_VERSION
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import (
+    Imu, Image,
+)
 import time
 import numpy as np
 from scipy.signal import butter, lfilter
+import cv2
+import cv_bridge
 
 global start_time
 flag = False
@@ -43,6 +49,14 @@ def callback (msg):
 
   if max(y)> 20:
     flag = True
+
+def send_image(path):
+    img = cv2.imread(path)
+    msg = cv_bridge.CvBridge().cv2_to_imgmsg(img, encoding="bgr8")
+    pub = rospy.Publisher('/robot/xdisplay', Image, latch=True)
+    pub.publish(msg)
+    # Sleep to allow for image to be published.
+    rospy.sleep(1)
 
 class HighFiveArm(object):
     """
@@ -92,7 +106,7 @@ class HighFiveArm(object):
         self._Kd['right_s0'] = 2
         self._Kd['right_s1'] = 2
         self._Kd['right_w0'] = 2
-        self._Kd['right_w1'] = 2
+        self._Kd['right_w1'] = 1
         self._Kd['right_w2'] = 2
         self._Kd['right_e0'] = 2
         self._Kd['right_e1'] = 2
@@ -152,8 +166,13 @@ class HighFiveArm(object):
                 comp_vel[joint] = (pos1[joint] - pos0[joint]) / (time_dict1[joint] - time_dict0[joint])
 
         # identify amplitude and fequency of desired robot gripper movement
+<<<<<<< HEAD
         amp = 3*0.175/2 #m
         freq = 1.00 #Hz
+=======
+        amp = 3*0.06/2 #m
+        freq = 3.5 #Hz
+>>>>>>> 17ff7dccd467435f3c8ec09081fbf32acc32f5db
 
         # jump ahead in time if hand impact is felt
         #if flag:
@@ -226,6 +245,9 @@ def main():
     rospy.init_node("rsdk_joint_torque_springs_right")
     rospy.Subscriber ('/robot/accelerometer/right_accelerometer/state', 
     Imu, callback)
+
+    # load face image on Baxter's screen
+    send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/facenickjr.jpg')
 
     # make high five arm object
     js = HighFiveArm('right')
