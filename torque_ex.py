@@ -95,37 +95,37 @@ class HighFiveArm(object):
             self._Kp[joint] = 1
             self._Kd[joint] = 1'''
         # Proportional gains
-        self._Kp['right_s0'] = 15
-        self._Kp['right_s1'] = 15
-        self._Kp['right_w0'] = 15
-        self._Kp['right_w1'] = 25
-        self._Kp['right_w2'] = 15
-        self._Kp['right_e0'] = 15
-        self._Kp['right_e1'] = 15
+        self._Kp['right_s0'] = 20
+        self._Kp['right_s1'] = 20
+        self._Kp['right_w0'] = 20
+        self._Kp['right_w1'] = 30
+        self._Kp['right_w2'] = 20
+        self._Kp['right_e0'] = 20
+        self._Kp['right_e1'] = 20
         # Derivative gains
-        self._Kd['right_s0'] = 2
-        self._Kd['right_s1'] = 2
-        self._Kd['right_w0'] = 2
-        self._Kd['right_w1'] = 1
-        self._Kd['right_w2'] = 2
-        self._Kd['right_e0'] = 2
-        self._Kd['right_e1'] = 2
+        self._Kd['right_s0'] = 3
+        self._Kd['right_s1'] = 3
+        self._Kd['right_w0'] = 3
+        self._Kd['right_w1'] = 3
+        self._Kd['right_w2'] = 3
+        self._Kd['right_e0'] = 3
+        self._Kd['right_e1'] = 3
         # Feedforward "gains"
         self._Kf['right_s0'] = 0
         self._Kf['right_s1'] = 0
         self._Kf['right_w0'] = 0
-        self._Kf['right_w1'] = 1
+        self._Kf['right_w1'] = 2.00
         self._Kf['right_w2'] = 0
         self._Kf['right_e0'] = 0
         self._Kf['right_e1'] = 0
         # Velocity filter weight
-        self._w['right_s0'] = 0.1
-        self._w['right_s1'] = 0.1
-        self._w['right_w0'] = 0.1
-        self._w['right_w1'] = 0.1
-        self._w['right_w2'] = 0.1
-        self._w['right_e0'] = 0.1
-        self._w['right_e1'] = 0.1
+        self._w['right_s0'] = 0.075
+        self._w['right_s1'] = 0.075
+        self._w['right_w0'] = 0.075
+        self._w['right_w1'] = 0.075
+        self._w['right_w2'] = 0.075
+        self._w['right_e0'] = 0.075
+        self._w['right_e1'] = 0.075
 
     def _update_forces(self):
         global start_time
@@ -151,7 +151,7 @@ class HighFiveArm(object):
         # record current angles/velocities
         cur_pos = self._limb.joint_angles()
         pos1 = cur_pos
-        #cur_vel = self._limb.joint_velocities()
+        cur_vel = self._limb.joint_velocities()
         time1 = time.time()
         # angular velocity computed by change in angle over change in time
         comp_vel = dict()
@@ -162,17 +162,12 @@ class HighFiveArm(object):
             for joint in self._limb.joint_names():
                 time_dict0[joint] = time0
                 time_dict1[joint] = time1
-            for joint in self._limb.joint_names():
-                comp_vel[joint] = (pos1[joint] - pos0[joint]) / (time_dict1[joint] - time_dict0[joint])
+            #for joint in self._limb.joint_names():
+                #comp_vel[joint] = float(pos1[joint] - pos0[joint]) / float(time_dict1[joint] - time_dict0[joint])
 
         # identify amplitude and fequency of desired robot gripper movement
-<<<<<<< HEAD
-        amp = 3*0.175/2 #m
-        freq = 1.00 #Hz
-=======
-        amp = 3*0.06/2 #m
-        freq = 3.5 #Hz
->>>>>>> 17ff7dccd467435f3c8ec09081fbf32acc32f5db
+        amp = 0.175/2 #m
+        freq = 1.000 #Hz
 
         # jump ahead in time if hand impact is felt
         #if flag:
@@ -197,7 +192,7 @@ class HighFiveArm(object):
         for joint in self._limb.joint_names():
             if count == 1:
                 # For very start of robot motion, assume velocity 0, set smooth_vel to 0
-                smooth_vel = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
+                smooth_vel = cur_vel #{'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
                 vel_0[joint] = smooth_vel[joint]
                 # Torque to apply calculated with PD coltrol + feeforward term
                 cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
@@ -205,10 +200,21 @@ class HighFiveArm(object):
         for joint in self._limb.joint_names():
             if count > 1:
                 # Compute smoothed version of current velocity
-                smooth_vel[joint] = self._w[joint] * comp_vel[joint] + (1 - self._w[joint]) * vel_0[joint]
+                smooth_vel[joint] = self._w[joint] * cur_vel[joint] + (1 - self._w[joint]) * vel_0[joint]
                 vel_0[joint] = smooth_vel[joint]
                 # Torque to apply calculated with PD coltrol + feeforward term
                 cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
+        # record variables of interest to text doc
+        f = open("output60med.txt", "a")
+        f.write(str(elapsed_time) + ',' + str(cur_pos['right_w1']) + ',' + str(cur_vel['right_w1']) + ',' + str(vel_0['right_w1']) + ',' + str(desired_pose['right_w1']) + ',' + str(desired_velocity['right_w1']) + ',' + str(self._Kf['right_w1'] * desired_feedforward['right_w1']) + ','+ "\n")
+        f.close()
+        #print("%.6f" % time1)
+        '''print(time1)
+        print(cur_pos['right_w1'])
+        print(cur_vel['right_w1'])
+        print(vel_0['right_w1'])
+        print(desired_pose['right_w1'])
+        print(desired_velocity['right_w1'])'''
         # command new joint torques
         count = count + 1
         self._limb.set_joint_torques(cmd)
