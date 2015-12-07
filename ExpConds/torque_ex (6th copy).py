@@ -28,8 +28,7 @@ import cv2
 import cv_bridge
 
 global start_time
-global rep_start
-flag = 1
+flag = False
 accel = []
 vel_0 = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
 count = 1
@@ -40,27 +39,16 @@ def callback (msg):
   global flag
   global accel
   global start_time
-  global rep_start
-  # Wait a reasonable length of hand-clapping cycle before listening
-  if time.time() - rep_start < 0.1:
-    flag = 1
-  if time.time() - rep_start > 0.1:
-    flag = 2
-    # Computer RMS acceleration from Baxter's wrist accelerometer
-    rms_accel = (msg.linear_acceleration.x ** 2 + msg.linear_acceleration.y ** 2 + msg.linear_acceleration.z ** 2) ** (0.5)
-    accel.append(rms_accel)
-    # Experimentally, sampling rate of robot accelerometer is 200 Hz, Nyquist freqency 100 Hz
-    accel_data = np.array(accel)
-    b,a = butter(1,[0.6, 0.7],'band')
-    y = lfilter(b,a,accel_data)
+  # Computer RMS acceleration from Baxter's wrist accelerometer
+  rms_accel = (msg.linear_acceleration.x ** 2 + msg.linear_acceleration.y ** 2 + msg.linear_acceleration.z ** 2) ** (0.5)
+  accel.append(rms_accel)
+  # Experimentally, sampling rate of robot accelerometer is 200 Hz, Nyquist freqency 100 Hz
+  accel_data = np.array(accel)
+  b,a = butter(1,0.25,'highpass')
+  y = lfilter(b,a,accel_data)
 
-    if max(y)> 2.5:
-      print(time.time() - rep_start)
-      flag = 3
-      accel = []
-      print(True)
-      #send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/baxterworking.png')
-      rep_start = time.time()
+  if max(y)> 20:
+    flag = True
 
 def send_image(path):
     img = cv2.imread(path)
@@ -81,7 +69,7 @@ class HighFiveArm(object):
     """
     def __init__(self, limb):
 
-        # control parameters`
+        # control parameters
         self._rate = 1000.0  # Hz
         self._missed_cmds = 20.0  # Missed cycles before triggering timeout
 
@@ -174,18 +162,19 @@ class HighFiveArm(object):
             for joint in self._limb.joint_names():
                 time_dict0[joint] = time0
                 time_dict1[joint] = time1
-            for joint in self._limb.joint_names():
-                comp_vel[joint] = float(pos1[joint] - pos0[joint]) / float(time_dict1[joint] - time_dict0[joint])
-            #print(pos1['right_w1'] - pos0['right_w1'])
+            #for joint in self._limb.joint_names():
+             #   comp_vel[joint] = float(pos1[joint] - pos0[joint]) / float(time_dict1[joint] - time_dict0[joint])
+            #print(float(pos1[joint] - pos0[joint]))
 
         # identify amplitude and fequency of desired robot gripper movement
         amp = 3*0.175/2 #m
         freq = 1.000 #Hz
 
         # jump ahead in time if hand impact is felt
-        if flag == 3:
-            time_jump = (freq/2) - 2*(time.time() % freq)
-            start_time = start_time + time_jump
+        #if flag:
+        #    time_jump = (freq/2) - 2*(time.time() % freq)
+        #    start_time = start_time + time_jump
+        #    flag = False
 
         # find current time and use to calculate desired position, velocity
         time0 = time1
@@ -217,9 +206,9 @@ class HighFiveArm(object):
                 # Torque to apply calculated with PD coltrol + feeforward term
                 cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
         # record variables of interest to text doc
-        f = open("output60react.txt", "a")
-        f.write(str(elapsed_time) + ',' + str(cur_pos['right_w1']) + ',' + str(cur_vel['right_w1']) + ',' + str(vel_0['right_w1']) + ',' + str(desired_pose['right_w1']) + ',' + str(desired_velocity['right_w1']) + ',' + str(self._Kf['right_w1'] * desired_feedforward['right_w1']) + ','+ str(pos1['right_w1'] - pos0['right_w1']) + "\n")
-        f.close()
+       # f = open("output260med.txt", "a")
+        #f.write(str(elapsed_time) + ',' + str(cur_pos['right_w1']) + ',' + str(cur_vel['right_w1']) + ',' + str(vel_0['right_w1']) + ',' + str(desired_pose['right_w1']) + ',' + str(desired_velocity['right_w1']) + ',' + str(self._Kf['right_w1'] * desired_feedforward['right_w1']) + ','+ "\n")
+        #f.close()
         #print("%.6f" % time1)
         '''print(time1)
         print(cur_pos['right_w1'])
@@ -257,9 +246,7 @@ def main():
     for each joint using dynamic_reconfigure.
     """
     global start_time
-    global rep_start
     start_time = time.time()
-    rep_start = time.time()
 
     print("Initializing node... ")
     rospy.init_node("rsdk_joint_torque_springs_right")
@@ -287,11 +274,6 @@ def main():
             rospy.logerr("Joint torque example failed to meet "
                          "specified control rate timeout.")
             break
-                # animate face if impact is felt
-        '''if flag == 3:
-            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/baxterworking.png')
-        if flag == 2:
-            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/facenickjr.jpg')'''
         js._update_forces()
         control_rate.sleep()
 
