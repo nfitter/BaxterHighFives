@@ -6,6 +6,7 @@
 Baxter RSDK Joint Torque Example: joint springs
 """
 
+import argparse
 import os
 import sys
 import argparse
@@ -30,11 +31,32 @@ import cv_bridge
 global start_time
 global rep_start
 flag = 1
-accel = []
+accelx = []
+accely = []
+accelz = []
 vel_0 = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
 count = 1
 global pos0
 global time0
+global des_disp0
+pause_start = time.time()
+time_pause = 0
+
+#####################################################
+# Define experimental variables for trial
+
+# identify whether the face will be animated (Boolean)
+face_anim = True
+
+# identify whether the robot will respond physically (Boolean)
+phys_resp = True
+
+# identify robot stiffness case (Boolean - True more stiff)
+stiff_case = True
+
+# identify amplitude and fequency of desired robot gripper movement (1.833, 2.667, 3.5)
+freq = 1.833 #Hz
+#####################################################
 
 def callback (msg):
   global flag
@@ -46,20 +68,36 @@ def callback (msg):
     flag = 1
   if time.time() - rep_start > 0.1:
     flag = 2
-    # Computer RMS acceleration from Baxter's wrist accelerometer
+    '''# Computer RMS acceleration from Baxter's wrist accelerometer
     rms_accel = (msg.linear_acceleration.x ** 2 + msg.linear_acceleration.y ** 2 + msg.linear_acceleration.z ** 2) ** (0.5)
     accel.append(rms_accel)
     # Experimentally, sampling rate of robot accelerometer is 200 Hz, Nyquist freqency 100 Hz
     accel_data = np.array(accel)
     b,a = butter(1,[0.6, 0.7],'band')
-    y = lfilter(b,a,accel_data)
-
+    y = lfilter(b,a,accel_data)'''
+    # Or actually, we should do the filtering on each channel separately
+    # Store buffer of accelerometer data and convert it into a numpy data type
+    accelx.append(msg.linear_acceleration.x)
+    accely.append(msg.linear_acceleration.y)
+    accelz.append(msg.linear_acceleration.z)
+    accelx_data = np.array(accelx)
+    accely_data = np.array(accely)
+    accelz_data = np.array(accelz)
+    # Fliter data with a highpass filter
+    b,a = butter(1,0.25,'highpass')
+    x_filt = lfilter(b,a,accelx_data)
+    y_filt = lfilter(b,a,accely_data)
+    z_filt = lfilter(b,a,accelz_data)
+    # Compute square root of the sum of squares
+    sqrsum_accel = (x_filt ** 2 + y_filt ** 2 + z_filt ** 2) ** (0.5)
+    # See if result is high enough to indicate a hand impact
     if max(y)> 2.5:
       print(time.time() - rep_start)
       flag = 3
-      accel = []
+      accelx = []
+      accely = []
+      accelz = []
       print(True)
-      #send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/baxterworking.png')
       rep_start = time.time()
 
 def send_image(path):
@@ -67,8 +105,6 @@ def send_image(path):
     msg = cv_bridge.CvBridge().cv2_to_imgmsg(img, encoding="bgr8")
     pub = rospy.Publisher('/robot/xdisplay', Image, latch=True)
     pub.publish(msg)
-    # Sleep to allow for image to be published.
-    rospy.sleep(1)
 
 class HighFiveArm(object):
     """
@@ -106,14 +142,24 @@ class HighFiveArm(object):
         '''for joint in self._limb.joint_names():
             self._Kp[joint] = 1
             self._Kd[joint] = 1'''
-        # Proportional gains
-        self._Kp['right_s0'] = 20
-        self._Kp['right_s1'] = 20
-        self._Kp['right_w0'] = 20
-        self._Kp['right_w1'] = 30
-        self._Kp['right_w2'] = 20
-        self._Kp['right_e0'] = 20
-        self._Kp['right_e1'] = 20
+        if stiff_case:
+	        # Proportional gains
+	        self._Kp['right_s0'] = 20
+	        self._Kp['right_s1'] = 20
+	        self._Kp['right_w0'] = 20
+	        self._Kp['right_w1'] = 30
+	        self._Kp['right_w2'] = 20
+	        self._Kp['right_e0'] = 20
+	        self._Kp['right_e1'] = 20
+	    else:
+	    	# Proportional gains
+	        self._Kp['right_s0'] = 25
+	        self._Kp['right_s1'] = 25
+	        self._Kp['right_w0'] = 25
+	        self._Kp['right_w1'] = 35
+	        self._Kp['right_w2'] = 25
+	        self._Kp['right_e0'] = 25
+	        self._Kp['right_e1'] = 25
         # Derivative gains
         self._Kd['right_s0'] = 3
         self._Kd['right_s1'] = 3
@@ -126,7 +172,7 @@ class HighFiveArm(object):
         self._Kf['right_s0'] = 0
         self._Kf['right_s1'] = 0
         self._Kf['right_w0'] = 0
-        self._Kf['right_w1'] = 2.00
+        self._Kf['right_w1'] = 1.5 # This was 2.0 before --> adjust to see if we can minimize overshoot
         self._Kf['right_w2'] = 0
         self._Kf['right_e0'] = 0
         self._Kf['right_e1'] = 0
@@ -145,6 +191,10 @@ class HighFiveArm(object):
         global count
         global pos0
         global time0
+		global des_disp0
+		global pause_start
+		global time_pause
+		global freq
 
         """
         Calculates the current angular difference between the desired
@@ -178,23 +228,39 @@ class HighFiveArm(object):
                 comp_vel[joint] = float(pos1[joint] - pos0[joint]) / float(time_dict1[joint] - time_dict0[joint])
             #print(pos1['right_w1'] - pos0['right_w1'])
 
-        # identify amplitude and fequency of desired robot gripper movement
-        amp = 3*0.175/2 #m
-        freq = 1.000 #Hz
-
-        # jump ahead in time if hand impact is felt
-        if flag == 3:
-            time_jump = (freq/2) - 2*(time.time() % freq)
-            start_time = start_time + time_jump
+        # hold still for some time if hand impact is felt and gripper is approaching human partner's hand
+        if flag == 3 and vel_0['right_w1'] < 0:
+        	T = 1.000/freq
+        	# For robot stopping as response case
+            time_pause = (T/2) - 2*((time.time() % freq)-(T/2))
+            '''# For robot retreating slowly as response case
+            time_pause = (T/2) - ((time.time() % freq) - (T/2))'''
+            pause_start = time.time()
 
         # find current time and use to calculate desired position, velocity
         time0 = time1
         pos0 = cur_pos
         elapsed_time = time.time() - start_time
-        des_angular_displacement = -amp*np.sin(2*np.pi*freq*elapsed_time)
-        des_angular_velocity = -amp*2*np.pi*freq*np.cos(2*np.pi*freq*elapsed_time)
+        if (time.time() - pause_start) < time_pause and phys_resp:
+        	# For robot stopping as response case
+        	des_angular_displacement = des_disp0
+        	des_angular_velocity = 0
+        	'''# For robot retreating slowly as result case
+        	des_angular_velocity = (-des_disp0)/(time_pause)
+        	des_angular_displacement = des_disp0 + (des_angular_velocity*(time.time() - pause_start))
+			des_disp0 = des_angular_displacement'''        	
+        else:
+        	# Look up amplitude for commanded clapping frequency
+        	# This could be changed to the best fit equation I found for continual clapping adjustment
+        	# This, combined with the temporal difference learning from my quals, could let the robot adapt tempo in real time
+        	amp_dict = {1.833:0.1725, 2.667:0.1125, 3.5:0.9}
+        	amp = amp_dict[freq]
+        	# Plug current time into characteristic trajectory equations, including phase shift so that robot starts out moving toward person
+        	des_angular_displacement = -amp*np.sin(2*np.pi*freq*elapsed_time + (1/(4*freq)))
+        	des_disp0 = des_angular_displacement
+        	des_angular_velocity = -amp*2*np.pi*freq*np.cos(2*np.pi*freq*elapsed_time + (1/(4*freq)))
         desired_pose = start_pose
-        desired_pose['right_w1'] = 1.7341652787231447 + des_angular_displacement
+        desired_pose['right_w1'] = 1.7341652787231447 + (amp-0.1725)/2 + des_angular_displacement
         desired_velocity = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
         desired_velocity['right_w1'] = des_angular_velocity
         desired_feedforward = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
@@ -217,8 +283,9 @@ class HighFiveArm(object):
                 # Torque to apply calculated with PD coltrol + feeforward term
                 cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
         # record variables of interest to text doc
-        f = open("output60react.txt", "a")
-        f.write(str(elapsed_time) + ',' + str(cur_pos['right_w1']) + ',' + str(cur_vel['right_w1']) + ',' + str(vel_0['right_w1']) + ',' + str(desired_pose['right_w1']) + ',' + str(desired_velocity['right_w1']) + ',' + str(self._Kf['right_w1'] * desired_feedforward['right_w1']) + ','+ str(pos1['right_w1'] - pos0['right_w1']) + "\n")
+        f = open("torques.txt", "a")
+        f.write(str(self._limb.joint_effort('right_s0')) + ',' + str(self._limb.joint_effort('right_s1')) + ',' + str(self._limb.joint_effort('right_w0')) + ',' + str(self._limb.joint_effort('right_w1')) + ',' + str(self._limb.joint_effort('right_w2')) + ',' + str(self._limb.joint_effort('right_e0')) + ',' + str(self._limb.joint_effort('right_e1')) + "\n")
+        #f.write(str(elapsed_time) + ',' + str(cur_pos['right_w1']) + ',' + str(cur_vel['right_w1']) + ',' + str(vel_0['right_w1']) + ',' + str(desired_pose['right_w1']) + ',' + str(desired_velocity['right_w1']) + ',' + str(self._Kf['right_w1'] * desired_feedforward['right_w1']) + ','+ str(pos1['right_w1'] - pos0['right_w1']) + "\n")
         f.close()
         #print("%.6f" % time1)
         '''print(time1)
@@ -258,6 +325,14 @@ def main():
     """
     global start_time
     global rep_start
+
+    # Let user input experiment trial number
+    parser = argparse.ArgumentParser(description = 'Input stimulus number.')
+    parser.add_argument('integers', metavar = 'N', type = int, nargs = '+', help = 'an integer representing exp conds')
+    trial_type = parser.parse_args()
+    # Make lookup table of conditions based on this input, assign appropriate values to global variables controlling trial conditions
+
+    # Start time
     start_time = time.time()
     rep_start = time.time()
 
@@ -267,7 +342,8 @@ def main():
     Imu, callback)
 
     # load face image on Baxter's screen
-    send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/facenickjr.jpg')
+    # On Baxter base station
+    send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/RestingFace.png')
 
     # make high five arm object
     js = HighFiveArm('right')
@@ -288,10 +364,11 @@ def main():
                          "specified control rate timeout.")
             break
                 # animate face if impact is felt
-        '''if flag == 3:
-            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/baxterworking.png')
-        if flag == 2:
-            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/facenickjr.jpg')'''
+        if face_anim:
+	        if flag == 3:
+	            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/ReactingFace.png')
+	        if flag == 2:
+	            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/RestingFace.png')
         js._update_forces()
         control_rate.sleep()
 
