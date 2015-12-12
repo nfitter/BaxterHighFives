@@ -1,102 +1,146 @@
 #!/usr/bin/env python
 
 # Hand-clapping code for the Rethink Robotics Baxter robot
-# Based on Rethink Robotics's example, named below
-"""
-Baxter RSDK Joint Torque Example: joint springs
-"""
+# Based on Rethink Robotics's example, 
+# "Baxter RSDK Joint Torque Example: joint springs"
 
-import os
-import sys
-import argparse
+#####################################################
+# Import necessary packages
+
 import rospy
-from dynamic_reconfigure.server import (
-    Server,
-)
-from std_msgs.msg import (
-    Empty,
-)
-import baxter_interface
-from baxter_interface import CHECK_VERSION
+import argparse                             # package for allowing user input
+import baxter_interface                     # package letting us access the Baxter limb API
+from baxter_interface import CHECK_VERSION 
 from sensor_msgs.msg import (
     Imu, Image,
-)
+)                                           # package letting us interface with Baxter's accelerometer and screen 
 import time
 import numpy as np
-from scipy.signal import butter, lfilter
-import cv2
-import cv_bridge
+from scipy.signal import butter, lfilter    # package helping us filter accelerometer signal
+import cv2                                  # package helping us with face animation
+import cv_bridge                            # package helping us with face animation
 
-global start_time
-global rep_start
-flag = 1
-accel = []
-vel_0 = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
-count = 1
-global pos0
-global time0
+#####################################################
+# Define global variables to be accessible between functions
 
-def callback (msg):
-  global flag
-  global accel
-  global start_time
-  global rep_start
-  # Wait a reasonable length of hand-clapping cycle before listening
-  if time.time() - rep_start < 0.1:
-    flag = 1
-  if time.time() - rep_start > 0.1:
-    flag = 2
-    # Computer RMS acceleration from Baxter's wrist accelerometer
-    rms_accel = (msg.linear_acceleration.x ** 2 + msg.linear_acceleration.y ** 2 + msg.linear_acceleration.z ** 2) ** (0.5)
-    accel.append(rms_accel)
-    # Experimentally, sampling rate of robot accelerometer is 200 Hz, Nyquist freqency 100 Hz
-    accel_data = np.array(accel)
-    b,a = butter(1,[0.6, 0.7],'band')
-    y = lfilter(b,a,accel_data)
-    # Or actually, we should filter each channel first
-    accelx.append()
-    accely.append()
-    accelz.append()
+global start_time                           # overall start time of Baxter processes
+global rep_start                            # timer starting after each hand impact
+pause_start = time.time()                   # start time of pause behavior of Baxter's gripper after hand impact on advance
+time_pause = 0                              # length of robot pause computed based on time of impact                       
+vel_0 = {'right_s0': 0.00, 'right_s1': 0.00, 'right_w0': 0.00, 'right_w1': 0.00, 'right_w2': 0.00, 'right_e0': 0.00, 'right_e1': 0.00}
+accelx = []                                 # x-wrist acceleration buffer
+accely = []                                 # y-wrist acceleration buffer
+accelz = []                                 # z-wrist acceleration buffer
+loop_count = 1                              # variable allowing computation exception the first time through the code loop
+state = 1                                   # variable controlling the state of the robot
+                                            # state 1: not looking for hand impact, state 2: looking for hand impact, state 3: felt impact
+                                            # the state variable is also used to control face rstoration to RestingFace
 
-    if max(y)> 2.5:
-      print(time.time() - rep_start)
-      flag = 3
-      accel = []
-      print(True)
-      #send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/baxterworking.png')
-      rep_start = time.time()
+#####################################################
+# Define global experimental variables for trial
+
+# Identify whether the face will be animated (Boolean)
+face_anim = True
+
+# Identify whether the robot will respond physically (Boolean)
+phys_resp = False
+
+# Identify robot stiffness case (Boolean - True more stiff)
+stiff_case = False
+
+# Identify amplitude and fequency of desired robot gripper movement (1.833, 2.667, 3.5)
+freq = 3.5 # Hz
+global amp
+
+#####################################################
+# Callback function for processing data from robot's wrist accelerometer
+
+def callback(msg):
+    # Produces processed accelerometer reading for contact detection
+    global start_time
+    global rep_start
+    global accelx
+    global accely
+    global accelz
+    global state
+
+    # Wait a reasonable length of hand-clapping cycle before listening
+    if time.time()-rep_start < 0.1: # seconds
+        # Allow for a brief pause in contact detection after hand contact to avoid button deboucing problem
+        state = 1
+    if time.time()-rep_start > 0.1: # seconds
+        # Start looking for hand contact
+        state = 2
+
+        # Animate face back to RestingFace
+        send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/RestingFace.png')
+
+        # Do the filtering on each accelerometer axis separately
+        # Store buffer of accelerometer data and convert it into a numpy data type
+        accelx.append(msg.linear_acceleration.x)
+        accely.append(msg.linear_acceleration.y)
+        accelz.append(msg.linear_acceleration.z)
+        accelx_data = np.array(accelx)
+        accely_data = np.array(accely)
+        accelz_data = np.array(accelz)
+
+        # Fliter data with a bandpass filter
+        b,a = butter(1,[0.5, 0.7],'band')
+        x_filt = lfilter(b,a,accelx_data)
+        y_filt = lfilter(b,a,accely_data)
+        z_filt = lfilter(b,a,accelz_data)
+
+        # Compute square root of the sum of squares
+        sqrsum_accel = (x_filt**2 + y_filt**2 + z_filt**2) ** (0.5)
+
+        # See if result is high enough to indicate a hand impact
+        if max(sqrsum_accel) > 5.0:
+            # Hand contact state
+            state = 3
+
+            # Animate face if contact felt
+            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/ReactingFace.png')
+            
+            # Empty buffers
+            accelx = []
+            accely = []
+            accelz = []
+            print(True)
+            
+            # Define new rep start time
+            rep_start = time.time()
+
+#####################################################
+# Function for pulishing images to Baxter's screen
 
 def send_image(path):
+    # Load desired image on Baxter's screen
     img = cv2.imread(path)
     msg = cv_bridge.CvBridge().cv2_to_imgmsg(img, encoding="bgr8")
     pub = rospy.Publisher('/robot/xdisplay', Image, latch=True)
     pub.publish(msg)
 
+#####################################################
+# High Five Arm class for allowing Baxter to execute desired arm motion
+
 class HighFiveArm(object):
-    """
-    Virtual Joint Springs class for torque example.
-    @param limb: limb on which to run joint springs example
-    @param reconfig_server: dynamic reconfigure server
-    JointSprings class contains methods for the joint torque example allowing
-    moving the limb to a neutral location, entering torque mode, and attaching
-    virtual springs.
-    """
+    # Initializing high five arm class
     def __init__(self, limb):
 
-        # control parameters`
+        # Loop control parameters
         self._rate = 1000.0  # Hz
-        self._missed_cmds = 20.0  # Missed cycles before triggering timeout
+        self._missed_cmds = 20.0  # missed cycles before triggering timeout
 
-        # create our limb instance
+        # Create our limb instance
         self._limb = baxter_interface.Limb(limb)
 
-        # initialize parameters
+        # Initialize feedback control parameters
         self._Kp = dict()
         self._Kd = dict()
         self._Kf = dict()
         self._w = dict()
 
-        # verify robot is enabled
+        # Verify robot is enabled
         print("Getting robot state... ")
         self._rs = baxter_interface.RobotEnable(CHECK_VERSION)
         self._init_state = self._rs.state().enabled
@@ -105,161 +149,149 @@ class HighFiveArm(object):
         print("Running. Ctrl-c to quit")
 
     def _update_parameters(self):
-        '''for joint in self._limb.joint_names():
-            self._Kp[joint] = 1
-            self._Kd[joint] = 1'''
-        # Proportional gains
-        self._Kp['right_s0'] = 20
-        self._Kp['right_s1'] = 20
-        self._Kp['right_w0'] = 20
-        self._Kp['right_w1'] = 30
-        self._Kp['right_w2'] = 20
-        self._Kp['right_e0'] = 20
-        self._Kp['right_e1'] = 20
-        # Derivative gains
-        self._Kd['right_s0'] = 3
-        self._Kd['right_s1'] = 3
-        self._Kd['right_w0'] = 3
-        self._Kd['right_w1'] = 3
-        self._Kd['right_w2'] = 3
-        self._Kd['right_e0'] = 3
-        self._Kd['right_e1'] = 3
-        # Feedforward "gains"
-        self._Kf['right_s0'] = 0
-        self._Kf['right_s1'] = 0
-        self._Kf['right_w0'] = 0
-        self._Kf['right_w1'] = 2.00
-        self._Kf['right_w2'] = 0
-        self._Kf['right_e0'] = 0
-        self._Kf['right_e1'] = 0
-        # Velocity filter weight
-        self._w['right_s0'] = 0.075
-        self._w['right_s1'] = 0.075
-        self._w['right_w0'] = 0.075
-        self._w['right_w1'] = 0.075
-        self._w['right_w2'] = 0.075
-        self._w['right_e0'] = 0.075
-        self._w['right_e1'] = 0.075
+        # Define feedback control parameters
+        for joint in self._limb.joint_names():
+            # Proportional gains
+            if stiff_case:
+                self._Kp[joint] = 20
+            else:
+                self._Kp[joint] = 30
+
+            # Derivative gains
+            self._Kd[joint] = 3
+
+            # Feedforward "gains"
+            self._Kf[joint] = 0
+
+            # Vanishing memory filter weight (for finding smoothed velocity)
+            self._w[joint] = 0.075
+
+        # Overwrite the feedforward "gain" to nonzero for the one joint you actually want to move
+        self._Kf['right_w1'] = 2.0 # <--play with this value to see if we can reduce overshoot
 
     def _update_forces(self):
+        # Calculates the current angular difference between the desired
+        # and the current joint positions applying a torque accordingly 
+        # using PD control.
         global start_time
-        global flag
-        global count
-        global pos0
-        global time0
+        global pause_start
+        global time_pause
+        global vel_0
+        global loop_count
+        global state
+        global freq
+        global amp
+        
+        # Define Baxter starting pose for hand-clapping interaction, obtained by posing robot and then querying joint positions
+        start_pose = {'right_s0': -1.20, 'right_s1': -0.13, 'right_w0': 1.35, 'right_w1': 1.73, 'right_w2': 0.00, 'right_e0': 1.33, 'right_e1': 2.02}
 
-        """
-        Calculates the current angular difference between the desired
-        and the current joint positions applying a torque accordingly 
-        using PD control.
-        """
-        # Define Baxter starting pose for hand-clapping interaction
-        start_pose = {'right_s0': -1.1953545275939943, 'right_s1': -0.12693691005249025, 'right_w0': 1.34568464463501, 'right_w1': 1.8998352036254884, 'right_w2': 0.0, 'right_e0': 1.3265098848083496, 'right_e1': 2.0168012385681156}
-
-        # get latest spring constants
+        # Get latest feedback control constants
         self._update_parameters()
 
-        # create our command dict
+        # Initialized dictionary of torque values
         cmd = dict()
 
-        # record current angles/velocities
+        # Record current angles/velocities
         cur_pos = self._limb.joint_angles()
-        pos1 = cur_pos
         cur_vel = self._limb.joint_velocities()
-        time1 = time.time() - start_time
-        # angular velocity computed by change in angle over change in time
-        comp_vel = dict()
-        time_dict0 = dict()
-        time_dict1 = dict()
-        # make time into appropriate dictionary
-        if count > 1:
-            for joint in self._limb.joint_names():
-                time_dict0[joint] = time0
-                time_dict1[joint] = time1
-            for joint in self._limb.joint_names():
-                comp_vel[joint] = float(pos1[joint] - pos0[joint]) / float(time_dict1[joint] - time_dict0[joint])
-            #print(pos1['right_w1'] - pos0['right_w1'])
 
-        # identify amplitude and fequency of desired robot gripper movement
-        amp = 3*0.175/2 #m
-        freq = 1.000 #Hz
+        # Calculate amount of time to hold still if hand impact is felt and gripper is approaching human partner's hand
+        if state == 3 and vel_0['right_w1'] <= 0:
+            T = 1.000/freq
 
-        # jump ahead in time if hand impact is felt
-        if flag == 3:
-            time_jump = (freq/2) - 2*(time.time() % freq)
-            start_time = start_time + time_jump
+            # For robot stopping as response case
+            time_pause = (T/2) - 2*((time.time() % freq)-(T/2))
+            '''# For robot retreating slowly as response case
+            time_pause = (T/2) - ((time.time() % freq) - (T/2))'''
+            pause_start = time.time()
 
-        # find current time and use to calculate desired position, velocity
-        time0 = time1
-        pos0 = cur_pos
+        # Find current time and use to calculate desired position, velocity
         elapsed_time = time.time() - start_time
-        des_angular_displacement = -amp*np.sin(2*np.pi*freq*elapsed_time)
-        des_angular_velocity = -amp*2*np.pi*freq*np.cos(2*np.pi*freq*elapsed_time)
+        if (time.time() - pause_start) < time_pause and phys_resp:
+
+            # For robot stopping as response case
+            des_angular_displacement = des_disp0 # save desired displacement for next loop
+            des_angular_velocity = 0
+            '''# For robot retreating slowly as result case
+            des_angular_velocity = (-des_disp0)/(time_pause)
+            des_angular_displacement = des_disp0 + (des_angular_velocity*(time.time() - pause_start))
+            des_disp0 = des_angular_displacement'''         
+        else:
+            # Look up amplitude for commanded clapping frequency
+            # This could be changed to the best fit equation I found for continual clapping adjustment
+            # This, combined with the temporal difference learning from my quals, could let the robot adapt tempo in real time
+            amp_dict = {1.833:0.1725, 2.667:0.1125, 3.5:0.9}
+            amp = amp_dict[freq]
+
+            # Plug current time into characteristic sinusoidal trajectory equations, including phase shift so that robot starts out moving toward person
+            des_angular_displacement = -amp*np.sin(2*np.pi*freq*elapsed_time + (1/(4*freq)))
+            des_disp0 = des_angular_displacement # save desired displacement for next loop
+            des_angular_velocity = -amp*2*np.pi*freq*np.cos(2*np.pi*freq*elapsed_time + (1/(4*freq)))
+        
+        # Define desired robot pose
         desired_pose = start_pose
-        desired_pose['right_w1'] = 1.7341652787231447 + des_angular_displacement
-        desired_velocity = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
+        motion_center = start_pose['right_w1'] - amp + (amp-0.1725)/2 # far retreat (starting) postition minus ampltude to center plus factor to make hand-clap occur at same workspace position every time 
+        desired_pose['right_w1'] = des_angular_displacement + motion_center
+        
+        # Define desired robot velocity
+        desired_velocity = {'right_s0': 0.00, 'right_s1': 0.00, 'right_w0': 0.00, 'right_w1': 0.00, 'right_w2': 0.00, 'right_e0': 0.00, 'right_e1': 0.00}
         desired_velocity['right_w1'] = des_angular_velocity
-        desired_feedforward = {'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
+
+        # Define something proportional to desired feedforward
+        desired_feedforward = {'right_s0': 0.00, 'right_s1': 0.00, 'right_w0': 0.00, 'right_w1': 0.00, 'right_w2': 0.00, 'right_e0': 0.00, 'right_e1': 0.00}
         desired_feedforward['right_w1'] = -des_angular_displacement
 
-        # calculate current forces
-        for joint in self._limb.joint_names():
-            if count == 1:
-                # For very start of robot motion, assume velocity 0, set smooth_vel to 0
-                smooth_vel = cur_vel #{'right_s0': 0.0000000000000000, 'right_s1': 0.0000000000000000, 'right_w0': 0.0000000000000000, 'right_w1': 0.0000000000000000, 'right_w2': 0.0000000000000000, 'right_e0': 0.0000000000000000, 'right_e1': 0.0000000000000000}
-                vel_0[joint] = smooth_vel[joint]
-                # Torque to apply calculated with PD coltrol + feeforward term
-                cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
+        # Define average needed gravity compensation based on torque recording from stationary robot arm
+        grav_comp = {'right_s0': -0.6020509915, 'right_s1': 7.4283286119, 'right_w0': 0.3976203966, 'right_w1': 1.7659150142, 'right_w2': -0.0344249292, 'right_e0': 19.748305949, 'right_e1': 1.1424249292}
+
+        # Calculate torques to be applied this iteration
         smooth_vel = dict()
         for joint in self._limb.joint_names():
-            if count > 1:
+            if loop_count == 1:
+                # For very start of robot motion, assume velocity 0, set smooth_vel to 0
+                smooth_vel[joint] = cur_vel[joint]
+                vel_0[joint] = smooth_vel[joint] # save smoothed velocity for next loop
+                loop_count = loop_count + 1
+            else:
                 # Compute smoothed version of current velocity
                 smooth_vel[joint] = self._w[joint] * cur_vel[joint] + (1 - self._w[joint]) * vel_0[joint]
-                vel_0[joint] = smooth_vel[joint]
-                # Torque to apply calculated with PD coltrol + feeforward term
-                cmd[joint] = self._Kp[joint] * (desired_pose[joint] - cur_pos[joint]) + self._Kd[joint] * (desired_velocity[joint] - smooth_vel[joint]) + self._Kf[joint] * desired_feedforward[joint]
-        # record variables of interest to text doc
-        f = open("output60react.txt", "a")
-        f.write(str(elapsed_time) + ',' + str(cur_pos['right_w1']) + ',' + str(cur_vel['right_w1']) + ',' + str(vel_0['right_w1']) + ',' + str(desired_pose['right_w1']) + ',' + str(desired_velocity['right_w1']) + ',' + str(self._Kf['right_w1'] * desired_feedforward['right_w1']) + ','+ str(pos1['right_w1'] - pos0['right_w1']) + "\n")
-        f.close()
-        #print("%.6f" % time1)
-        '''print(time1)
-        print(cur_pos['right_w1'])
-        print(cur_vel['right_w1'])
-        print(vel_0['right_w1'])
-        print(desired_pose['right_w1'])
-        print(desired_velocity['right_w1'])'''
-        # command new joint torques
-        count = count + 1
+            # Save current smoothed velocity for use in the next iteration
+            vel_0[joint] = smooth_vel[joint]
+            # Torque to apply calculated with PD coltrol + feeforward term
+            cmd[joint] = self._Kp[joint]*(desired_pose[joint]-cur_pos[joint]) + self._Kd[joint]*(desired_velocity[joint]-smooth_vel[joint]) + self._Kf[joint]*desired_feedforward[joint] + 0.5*grav_comp[joint]
+
+        # Record variables of interest to text doc
+        #f = open("torques.txt", "a")
+        #f.write(str(elapsed_time) + ',' + str(cur_pos['right_w1']) + ',' + str(cur_vel['right_w1']) + ',' + str(vel_0['right_w1']) + ',' + str(desired_pose['right_w1']) + ',' + str(desired_velocity['right_w1']) + ',' + str(self._Kf['right_w1'] * desired_feedforward['right_w1']) + "\n")
+        #f.close()
+
+        # Command new joint torques
         self._limb.set_joint_torques(cmd)
 
-    def move_to_start_position(self):
-        # Define Baxter starting pose for hand-clapping interaction
-        start_pose = {'right_s0': -1.2582477398254395, 'right_s1': 0.3033447004577637, 'right_w0': 1.290844831530762, 'right_w1': 1.7341652787231447, 'right_w2': -0.041033986029052734, 'right_e0': 1.5378157380981445, 'right_e1': 2.1682818411987306}
-
     def clean_shutdown(self):
-        """
-        Switches out of joint torque mode to exit cleanly
-        """
+        #Switches out of joint torque mode to exit cleanly
         print("\nExiting example...")
         self._limb.exit_control_mode()
         if not self._init_state and self._rs.state().enabled:
             print("Disabling robot...")
             self._rs.disable()
 
+#####################################################
+# Main loop of code
+
 def main():
-    """RSDK Joint Torque Example: Joint Springs
-    Moves the specified limb to a neutral location and enters
-    torque control mode, attaching virtual springs (Hooke's Law)
-    to each joint maintaining the start position.
-    Run this example on the specified limb and interact by
-    grabbing, pushing, and rotating each joint to feel the torques
-    applied that represent the virtual springs attached.
-    You can adjust the spring constant and damping coefficient
-    for each joint using dynamic_reconfigure.
-    """
+    # Moves Baxter's arm in a hand-clapping trajectory with varying 
+    # reactivity, tempo, and stiffness based on user input
     global start_time
     global rep_start
+
+    # Let user input experiment trial number
+    #parser = argparse.ArgumentParser(description = 'Input stimulus number.')
+    #parser.add_argument('integers', metavar = 'N', type = int, nargs = '+', help = 'an integer representing exp conds')
+    #trial_type = parser.parse_args()
+    # Make lookup table of conditions based on this input, assign appropriate values to global variables controlling trial conditions
+
+    # Start time
     start_time = time.time()
     rep_start = time.time()
 
@@ -268,38 +300,28 @@ def main():
     rospy.Subscriber ('/robot/accelerometer/right_accelerometer/state', 
     Imu, callback)
 
-    # load face image on Baxter's screen
-    send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/facenickjr.jpg')
+    # Load face image on Baxter's screen
+    send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/RestingFace.png')
 
-    # make high five arm object
+    # Make high five arm object
     js = HighFiveArm('right')
 
-    # set control rate
-    #control_rate = rospy.Rate(js._rate)
+    # Set control rate
     control_rate = rospy.Rate(1000)
 
-    # for safety purposes, set the control rate command timeout.
-    # if the specified number of command cycles are missed, the robot
-    # will timeout and disable
+    # For safety purposes, set the control rate command timeout.
+    # If the specified number of command cycles are missed, the robot
+    # will timeout and disable.
     js._limb.set_command_timeout((1.0 / js._rate) * js._missed_cmds)
 
-    # loop at specified rate commanding new joint torques
+    # Loop at specified rate commanding new joint torques
     while not rospy.is_shutdown():
         if not js._rs.state().enabled:
             rospy.logerr("Joint torque example failed to meet "
                          "specified control rate timeout.")
             break
-                # animate face if impact is felt
-        if flag == 3:
-            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/baxterworking.png')
-        '''if flag == 2:
-            send_image('/home/baxter/naomi_ws/src/baxter_examples/share/images/facenickjr.jpg')'''
         js._update_forces()
         control_rate.sleep()
-
-    # register shutdown callback
-    rospy.on_shutdown(js.clean_shutdown)
-    js.move_to_neutral()
 
 if __name__ == "__main__":
     main()
