@@ -93,7 +93,7 @@ def callback(msg):
         f.close()
 
         # Look up threshold for commanded clapping frequency
-        thresh_dict = {1.000:4.5, 1.833:5.5, 2.667:6.0, 3.500:7.0, 4.333:7.5}
+        thresh_dict = {1.000:4.0, 1.833:5.0, 2.667:5.5, 3.500:7.0, 4.333:7.5}
         thresh = thresh_dict[freq]
         # ---> After this experiment, I should try to fit a model for this to make clapping tempo change possible, along with other things in lookup tables <---
 
@@ -207,6 +207,26 @@ class HighFiveArm(object):
         amplitude_compensation = 0.9*2*(amp-0.213) # take difference between current ampliture and max possible amplitude to make hand-clap occur at same joint angle every time 
          # (leading multiplier is hand-tuned to fit our motion expectations)
         start_pose['right_w1'] = start_pose['right_w1'] + amplitude_compensation
+
+        # Define tomeout for motion and grab current arm joint angles
+        self._limb.move_to_joint_positions(start_pose,timeout=100) # we want to give it time to get all the way there
+        end_positions = self._limb.joint_angles()
+        thresh = 0.008726646
+
+        # Iterate until arm is close enough to desired position
+        for key in start_pose.keys(): 
+            diff = abs(start_pose[key] - end_positions[key])
+            if diff > thresh: 
+                print key, diff
+                return False
+            return True
+
+    def _update_end_pos(self):
+        # Use this to move arm gently to far retreat position at end of trial
+        
+        # Define starting pose (same as ending pose)
+        start_pose = {'right_s0': -0.8620972018066407, 'right_s1': 0.35665053277587894, 'right_w0': 1.1696603494262696, 'right_w1': 1.6193157223693849, 'right_w2': -0.02070874061279297, 'right_e0': 1.5132720455200197, 'right_e1': 1.9381847232788088}
+        # ---> if I update start_pose here, need to update another place, too, and also update the grav comp feedforward torques <---
 
         # Define tomeout for motion and grab current arm joint angles
         self._limb.move_to_joint_positions(start_pose,timeout=100) # we want to give it time to get all the way there
@@ -363,15 +383,15 @@ class HighFiveArm(object):
         # Uncomment next line to record just torques being exerted by Baxter
         #f.write(str(published_time) + ',' + str(cur_torques['right_s0']) + ',' + str(cur_torques['right_s1']) + ',' + str(cur_torques['right_w0']) + ',' + str(cur_torques['right_w1']) + ',' + str(cur_torques['right_w2']) + ',' + str(cur_torques['right_e0']) + ',' + str(cur_torques['right_s1']) + "\n")
         # Uncomment next line to record only actual and desired positions
-        f.write(str(published_time) + ',' + str(cur_pos['right_w1']) + ',' + str(desired_pose['right_w1']) + "\n")
+        #f.write(str(published_time) + ',' + str(cur_pos['right_w1']) + ',' + str(desired_pose['right_w1']) + "\n")
         # ---> Uncomment next line to record everything for actual trials <---
-        '''f.write(str(published_time) + ',' + str(time.time()) + ',' + str(face_anim) + ',' + str(phys_resp) + ',' + str(stiff_case) + ',' + str(freq) + ',' + 
+        f.write(str(published_time) + ',' + str(time.time()) + ',' + str(face_anim) + ',' + str(phys_resp) + ',' + str(stiff_case) + ',' + str(freq) + ',' + 
                                             str(cur_pos['right_s0']) + ',' + str(cur_pos['right_s1']) + ',' + str(cur_pos['right_w0']) + ',' + str(cur_pos['right_w1']) + ',' + str(cur_pos['right_w2']) + ',' + str(cur_pos['right_e0']) + ',' + str(cur_pos['right_e1']) + ',' + 
                                             str(vel_0['right_s0']) + ',' + str(vel_0['right_s1']) + ',' + str(vel_0['right_w0']) + ',' + str(vel_0['right_w1']) + ',' + str(vel_0['right_w2']) + ',' + str(vel_0['right_e0']) + ',' + str(vel_0['right_e1']) + ',' + 
                                             str(desired_pose['right_s0']) + ',' + str(desired_pose['right_s1']) + ',' + str(desired_pose['right_w0']) + ',' + str(desired_pose['right_w1']) + ',' + str(desired_pose['right_w2']) + ',' + str(desired_pose['right_e0']) + ',' + str(desired_pose['right_e1']) + ',' + 
                                             str(desired_velocity['right_s0']) + ',' + str(desired_velocity['right_s1']) + ',' + str(desired_velocity['right_w0']) + ',' + str(desired_velocity['right_w1']) + ',' + str(desired_velocity['right_w2']) + ',' + str(desired_velocity['right_e0']) + ',' + str(desired_velocity['right_e1']) + ',' + 
                                             str(self._Kf['right_s0'] * desired_feedforward['right_s0']) + ',' + str(self._Kf['right_s1'] * desired_feedforward['right_s1']) + ',' + str(self._Kf['right_w0'] * desired_feedforward['right_w0']) + ',' + str(self._Kf['right_w1'] * desired_feedforward['right_w1']) + ',' + str(self._Kf['right_w2'] * desired_feedforward['right_w2']) + ',' + str(self._Kf['right_e0'] * desired_feedforward['right_e0']) + ',' + str(self._Kf['right_e1'] * desired_feedforward['right_e1']) + "\n")
-        '''
+        
         # ---> Also rosbag alongside trial <---
         f.close()
 
@@ -422,7 +442,7 @@ def main():
                     16:[False,True,True,1.000,False], 17:[False,True,True,1.833,False], 18:[False,True,True,2.667,False],
                     19:[True,False,True,1.000,False], 20:[True,False,True,1.833,False], 21:[True,False,True,2.667,False],
                     22:[True,True,True,1.000,False], 23:[True,True,True,1.833,False], 24:[True,True,True,2.667,False], 
-                    25:[True,True,False,1.000,True]} # <---in last trial, ask for user's favorite set of conditions, use this
+                    25:[True,False,False,1.833,True]} # <---in last trial, ask for user's favorite set of conditions, use this
     
     # Break out selected dictionary entries into experiment trial variables
     face_anim = trial_stimuli[trial_cond][0] # set Boolean for turning face animation on or off
@@ -480,7 +500,9 @@ def main():
             control_rate.sleep()
         else:
             # Go back to start position once trial is done
-            js._update_joint_angles()
+            rospy.sleep(0.2)
+            send_image('/home/baxter/naomi_ws/src/test/src/BaxterHighFives/RestingFace.png')
+            js._update_end_pos()
 
 
 if __name__ == "__main__":
